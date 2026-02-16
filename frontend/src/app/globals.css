@@ -362,7 +362,8 @@
   will-change: transform, opacity;
 }
 
-.group\\/dock:hover .dock-tooltip {
+/* Show tooltip on hover using attribute selector for Tailwind group/dock */
+[class~="group/dock"]:hover .dock-tooltip {
   opacity: 1;
   transform: translateX(-50%) scale3d(1, 1, 1);
 }
