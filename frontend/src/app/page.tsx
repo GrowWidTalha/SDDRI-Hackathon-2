@@ -1,47 +1,89 @@
-/* Homepage with redirect logic.
+/**
+ * Landing Page
+ * [From]: specs/012-ui-redesign/tasks.md - T-015, T-016
+ *
+ * Story-driven landing page with all sections combined:
+ * - Hero section at top
+ * - Story sections with narrative
+ * - Feature grid in middle
+ * - CTA section at bottom
+ * - Smart redirect for authenticated users
+ */
 
-[Task]: T027
-[From]: specs/003-frontend-task-manager/plan.md
-
-Redirects unauthenticated users to /login and authenticated users to /tasks.
-*/
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { HeroSection } from '@/components/landing/HeroSection';
+import { ProblemStorySection, SolutionStorySection } from '@/components/landing/StorySection';
+import { FeatureSection } from '@/components/landing/FeatureSection';
+import { CTASection } from '@/components/landing/CTASection';
 import { authClient } from '@/lib/auth-client';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 
-export default function Home() {
+export default function LandingPage() {
   const router = useRouter();
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const { data, error } = await authClient.getSession();
-
-        if (error || !data) {
-          // Not authenticated - redirect to login
-          router.push('/login');
-        } else {
-          // Authenticated - redirect to tasks
-          router.push('/tasks');
+        const { data } = await authClient.getSession();
+        if (data) {
+          // User is authenticated, redirect to dashboard
+          router.push('/dashboard');
+          return;
         }
-      } catch (err) {
-        // Error checking auth - redirect to login
-        router.push('/login');
+        setIsAuthenticated(false);
+      } catch {
+        // Error checking auth, assume not authenticated
+        setIsAuthenticated(false);
+      } finally {
+        setIsLoading(false);
       }
     };
 
     checkAuth();
   }, [router]);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center">
+  // Show loading while checking auth
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <LoadingSpinner size="lg" />
-        <p className="mt-4 text-gray-600">Loading...</p>
       </div>
-    </div>
+    );
+  }
+
+  // If authenticated, redirect will happen (empty return is fine)
+  if (isAuthenticated) {
+    return null;
+  }
+
+  return (
+    <main className="min-h-screen bg-background">
+      {/* Hero Section */}
+      <HeroSection />
+
+      {/* Problem Story Section */}
+      <ProblemStorySection />
+
+      {/* Feature Grid */}
+      <FeatureSection />
+
+      {/* Solution Story Section */}
+      <SolutionStorySection />
+
+      {/* CTA Section */}
+      <CTASection />
+
+      {/* Footer */}
+      <footer className="py-12 px-4 sm:px-6 lg:px-8 border-t border-glass-border">
+        <div className="max-w-7xl mx-auto text-center text-sm text-muted-foreground">
+          <p>© 2024 Todo List App. Built with love for productivity.</p>
+        </div>
+      </footer>
+    </main>
   );
 }

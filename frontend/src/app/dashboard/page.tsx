@@ -1,71 +1,160 @@
-/* Dashboard page - main task management interface with Notion-inspired design.
+/* Dashboard page - Grid-based task management with glassmorphism UI.
 
-[Task]: T021-T024, T072
+[Task]: T017-T020, T072
 [From]: specs/005-ux-improvement/tasks.md
+[Updated]: specs/012-ui-redesign/tasks.md - T-017, T-018, T-020, T-021
 
-This Server Component:
-- Fetches initial tasks server-side for fast page load
-- Passes data to TaskListClient for client-side interactions
-- Notion-inspired design with generous whitespace
-- Clean, minimalistic layout
+This page:
+- Displays tasks in a responsive grid layout
+- Uses server-side data fetching for initial load
+- Features glassmorphism design with Deep Rich Dark theme
+- Square board-style task cards with hover actions
+- Grid customization controls
+- Floating dock navigation
 */
-import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
-import { TaskListClient } from '@/components/tasks/TaskListClient';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { TaskGrid } from '@/components/dashboard/TaskGrid';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
-import { fetchTasks } from '@/lib/api/server';
+import { GridControls } from '@/components/dashboard/GridControls';
+import { FloatingDock } from '@/components/design-system';
+import { taskApi } from '@/lib/task-api';
 import { getTaskUrgency } from '@/lib/utils';
 import type { Task } from '@/types/task';
 
 const ITEMS_PER_PAGE = 50;
 
-async function DashboardContent() {
-  const cookieStore = await cookies();
-  const authToken = cookieStore.get('auth_token');
-
-  // Redirect to login if not authenticated
-  if (!authToken) {
-    redirect('/login');
-  }
-
-  // Fetch initial tasks server-side
-  let initialTasks: Task[] = [];
-  let initialTotal = 0;
-
-  try {
-    const response = await fetchTasks({
-      limit: ITEMS_PER_PAGE,
-      offset: 0,
-    });
-
-    if (response) {
-      // Add computed urgency to each task
-      initialTasks = response.tasks.map(task => ({
-        ...task,
-        urgency: getTaskUrgency(task.due_date),
-      })) as Task[];
-      initialTotal = response.total;
-    }
-  } catch (error) {
-    console.error('Failed to fetch tasks:', error);
-  }
-
-  return (
-    <div className="min-h-screen bg-background">
-      {/* Header with generous spacing [T072] */}
-      <DashboardHeader />
-
-      {/* Main content with Notion-style spacing */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
-        <TaskListClient
-          initialTasks={initialTasks}
-          initialTotal={initialTotal}
-        />
-      </main>
-    </div>
-  );
-}
+type GridColumns = 1 | 2 | 3 | 4;
 
 export default function DashboardPage() {
-  return <DashboardContent />;
+  const router = useRouter();
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [columns, setColumns] = useState<GridColumns>(3);
+
+  // Fetch tasks on mount
+  useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        setLoading(true);
+        const response = await taskApi.listTasks({
+          limit: ITEMS_PER_PAGE,
+          offset: 0,
+        });
+
+        if (response?.tasks) {
+          // Add computed urgency to each task
+          const tasksWithUrgency = response.tasks.map((task: Task) => ({
+            ...task,
+            urgency: getTaskUrgency(task.due_date),
+          })) as Task[];
+          setTasks(tasksWithUrgency);
+        }
+      } catch (error) {
+        console.error('Failed to fetch tasks:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTasks();
+  }, []);
+
+  const handleTaskToggleComplete = async (taskId: string) => {
+    // Toggle complete locally for optimistic update
+    setTasks(prev =>
+      prev.map(task =>
+        task.id === taskId ? { ...task, completed: !task.completed } : task
+      )
+    );
+
+    // Then call API
+    try {
+      const updated = await fetch(`/api/tasks/${taskId}/toggle`, {
+        method: 'POST',
+      });
+      // Update with server response
+    } catch (error) {
+      // Revert on error
+      setTasks(prev =>
+        prev.map(task =>
+          task.id === taskId ? { ...task, completed: !task.completed } : task
+        )
+      );
+    }
+  };
+
+  const handleTaskEdit = (task: Task) => {
+    // Open edit dialog or navigate to edit page
+    router.push(`/tasks/${task.id}/edit`);
+  };
+
+  const handleTaskDelete = async (taskId: string) => {
+    // Optimistically remove from list
+    setTasks(prev => prev.filter(task => task.id !== taskId));
+
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: 'DELETE',
+      });
+      // Server returns success
+      // Refresh the task list
+      const response = await taskApi.listTasks({
+        limit: ITEMS_PER_PAGE,
+        offset: 0,
+      });
+      if (response?.tasks) {
+        setTasks(response.tasks.map((task: Task) => ({
+          ...task,
+          urgency: getTaskUrgency(task.due_date),
+        })) as Task[]);
+      }
+    } catch (error) {
+      // Revert on error
+      console.error('Failed to delete task:', error);
+    }
+  };
+
+  const handleTaskClick = (task: Task) => {
+    // Navigate to task detail
+    router.push(`/tasks/${task.id}`);
+  };
+
+  return (
+    <div className="min-h-screen bg-background pb-20">
+      {/* Header */}
+      <DashboardHeader />
+
+      {/* Main content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-12">
+        {/* Grid controls */}
+        <div className="mb-6">
+          <GridControls
+            columns={columns}
+            onColumnsChange={setColumns}
+          />
+        </div>
+
+        {/* Task Grid */}
+        <TaskGrid
+          tasks={tasks}
+          loading={loading}
+          columns={columns}
+          onTaskClick={handleTaskClick}
+          onTaskEdit={handleTaskEdit}
+          onTaskDelete={handleTaskDelete}
+          onTaskToggleComplete={handleTaskToggleComplete}
+          sortable={false}
+        />
+      </main>
+
+      {/* Floating Dock Navigation */}
+      <FloatingDock
+        showOnScroll={true}
+        includeThemeToggle={true}
+      />
+    </div>
+  );
 }

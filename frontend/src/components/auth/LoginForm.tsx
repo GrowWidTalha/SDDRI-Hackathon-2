@@ -1,187 +1,100 @@
-/* Login form component (client component).
+/**
+ * Login form component (client component).
+ *
+ * [Task]: T032, T075
+ * [From]: specs/001-user-auth/plan.md, specs/005-ux-improvement/tasks.md
+ * [Updated]: specs/012-ui-redesign/tasks.md - T-023
+ *
+ * Redesigned with multi-step card approach:
+ * - Step 1: Email
+ * - Step 2: Password
+ * - GlassCard styling with MultiStepForm wrapper
+ */
 
-[Task]: T032, T075
-[From]: specs/001-user-auth/plan.md, specs/005-ux-improvement/tasks.md
+'use client';
 
-Updated with Notion-inspired minimalistic design using theme variables.
-*/
-"use client";
+import { useRouter } from 'next/navigation';
+import { apiClient } from '@/lib/api-client';
+import type { SignInRequest } from '@/types/auth';
+import { MultiStepForm, type FormStep } from '@/components/design-system';
+import { toast } from 'sonner';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api-client";
-import type { SignInRequest } from "@/types/auth";
-import { cn } from "@/lib/utils";
+const loginSteps: FormStep[] = [
+  {
+    id: 'email',
+    title: 'Welcome back',
+    description: 'Enter your email to continue',
+    fields: [
+      {
+        name: 'email',
+        label: 'Email',
+        type: 'email',
+        placeholder: 'you@example.com',
+        required: true,
+        validation: (value: string) => {
+          const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!pattern.test(value)) {
+            return 'Invalid email format';
+          }
+        },
+      },
+    ],
+  },
+  {
+    id: 'password',
+    title: 'Enter your password',
+    description: 'Welcome back! Please enter your password',
+    fields: [
+      {
+        name: 'password',
+        label: 'Password',
+        type: 'password',
+        placeholder: '••••••••',
+        required: true,
+        validation: (value: string) => {
+          if (value.length < 8) {
+            return 'Password must be at least 8 characters';
+          }
+        },
+      },
+    ],
+  },
+];
 
 export function LoginForm() {
   const router = useRouter();
-  const [formData, setFormData] = useState<SignInRequest>({
-    email: "",
-    password: "",
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Client-side validation
-  /* [Task]: T033 */
-  const validateEmail = (email: string): boolean => {
-    const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return pattern.test(email);
-  };
-
-  const validatePassword = (password: string): boolean => {
-    return password.length >= 8;
-  };
-
-  const validateForm = (): boolean => {
-    setError(null);
-
-    if (!formData.email) {
-      setError("Email is required");
-      return false;
-    }
-
-    if (!validateEmail(formData.email)) {
-      setError("Invalid email format");
-      return false;
-    }
-
-    if (!formData.password) {
-      setError("Password is required");
-      return false;
-    }
-
-    if (!validatePassword(formData.password)) {
-      setError("Password must be at least 8 characters");
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
+  const handleSubmit = async (data: Record<string, any>) => {
+    const signInData: SignInRequest = {
+      email: data.email,
+      password: data.password,
+    };
 
     try {
-      const result = await apiClient.signIn(formData);
-      router.push("/dashboard");
+      await apiClient.signIn(signInData);
+      toast.success('Signed in successfully');
+      router.push('/dashboard');
     } catch (err: unknown) {
       if (err instanceof Error) {
-        if (err.message.includes("Invalid email or password")) {
-          setError("Invalid email or password");
+        if (err.message.includes('Invalid email or password')) {
+          toast.error('Invalid email or password');
         } else {
-          setError("Failed to sign in. Please try again.");
+          toast.error('Failed to sign in. Please try again.');
         }
       } else {
-        setError("An unexpected error occurred");
+        toast.error('An unexpected error occurred');
       }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-    if (error) {
-      setError(null);
+      throw err; // Re-throw to keep form on current step
     }
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-6 sm:p-8">
-      <form className="space-y-4" onSubmit={handleSubmit}>
-      {/* Notion-inspired form fields - clean and minimal */}
-      <div className="space-y-3">
-        <div>
-          <label
-            htmlFor="email"
-            className="block text-sm font-medium text-foreground mb-1.5"
-          >
-            Email
-          </label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            className={cn(
-              "w-full px-3 py-2",
-              "bg-background border border-input rounded-lg",
-              "text-foreground placeholder:text-muted-foreground",
-              "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
-              "transition-shadow",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
-            )}
-            placeholder="you@example.com"
-            value={formData.email}
-            onChange={handleChange}
-            disabled={isLoading}
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="password"
-            className="block text-sm font-medium text-foreground mb-1.5"
-          >
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            className={cn(
-              "w-full px-3 py-2",
-              "bg-background border border-input rounded-lg",
-              "text-foreground placeholder:text-muted-foreground",
-              "focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent",
-              "transition-shadow",
-              "disabled:opacity-50 disabled:cursor-not-allowed"
-            )}
-            placeholder="••••••••"
-            value={formData.password}
-            onChange={handleChange}
-            disabled={isLoading}
-          />
-        </div>
-      </div>
-
-      {/* Error message - Notion-style subtle alert */}
-      {error && (
-        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
-
-      <button
-        type="submit"
-        disabled={isLoading}
-        className={cn(
-          "w-full py-2.5 px-4",
-          "bg-primary text-primary-foreground",
-          "rounded-lg font-medium text-sm",
-          "hover:bg-primary/90",
-          "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
-          "disabled:opacity-50 disabled:cursor-not-allowed",
-          "transition-colors"
-        )}
-      >
-        {isLoading ? "Signing in..." : "Sign In"}
-      </button>
-    </form>
+    <div className="flex items-center justify-center min-h-[400px]">
+      <MultiStepForm
+        steps={loginSteps}
+        onSubmit={handleSubmit}
+        submitLabel="Sign In"
+      />
     </div>
   );
 }

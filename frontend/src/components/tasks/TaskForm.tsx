@@ -1,374 +1,354 @@
-"use client";
+/**
+ * TaskForm component (client component).
+ *
+ * [From]: specs/003-frontend-task-manager/
+ * [Updated]: specs/012-ui-redesign/tasks.md - T-025
+ *
+ * Redesigned with multi-step card approach:
+ * - Step 1: Title + description + tags
+ * - Step 2: Due date + priority + reminder
+ * - Step 3: Recurrence settings
+ * - GlassCard styling with MultiStepForm wrapper
+ */
 
-import React, { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import type { Task, TaskFormData, TaskPriority } from "@/types/task";
-import { taskFormSchema } from "@/lib/schemas/forms";
-import { taskApi } from "@/lib/task-api";
-import { useOptimisticAction } from "@/lib/hooks";
-import { cn } from "@/lib/utils";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/Button";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
-import { Input } from "@/components/ui/Input";
-import { Textarea } from "@/components/ui/Textarea";
-import { Label } from "@/components/ui/label";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select";
-import { DueDateField } from "@/components/tasks/DueDateField";
-import { ReminderOffsetSelector } from "@/components/tasks/ReminderOffsetSelector";
-import { RecurrencePicker } from "@/components/tasks/RecurrencePicker";
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+import type { Task, TaskFormData, TaskPriority } from '@/types/task';
+import { taskFormSchema } from '@/lib/schemas/forms';
+import { taskApi } from '@/lib/task-api';
+import { MultiStepForm, type FormStep } from '@/components/design-system';
+import { cn } from '@/lib/utils';
+import { DueDateField } from '@/components/tasks/DueDateField';
+import { ReminderOffsetSelector } from '@/components/tasks/ReminderOffsetSelector';
+import { RecurrencePicker } from '@/components/tasks/RecurrencePicker';
 
 interface TaskFormProps {
-    isOpen: boolean;
-    onClose: () => void;
-    task?: Task;
-    mode: "create" | "edit";
-    onTaskCreated?: (newTask: Task) => void;
-    onTaskUpdated?: (updatedTask: Task) => void;
+  isOpen: boolean;
+  onClose: () => void;
+  task?: Task;
+  mode: 'create' | 'edit';
+  onTaskCreated?: (newTask: Task) => void;
+  onTaskUpdated?: (updatedTask: Task) => void;
+}
+
+// Helper function to create form steps
+function createFormSteps(task?: Task): FormStep[] {
+  return [
+    {
+      id: 'basic',
+      title: 'Task Details',
+      description: 'What do you need to accomplish?',
+      fields: [
+        {
+          name: 'title',
+          label: 'Title',
+          type: 'text',
+          placeholder: 'Enter task title',
+          required: true,
+          validation: (value: string) => {
+            if (!value || value.trim().length < 1) {
+              return 'Title is required';
+            }
+            if (value.length > 200) {
+              return 'Title must be less than 200 characters';
+            }
+          },
+        },
+        {
+          name: 'description',
+          label: 'Description',
+          type: 'textarea',
+          placeholder: 'Add more details about this task (optional)',
+        },
+        {
+          name: 'tags',
+          label: 'Tags',
+          type: 'text',
+          placeholder: 'work, urgent, project (comma-separated)',
+          validation: (value: string) => {
+            if (value && value.length > 500) {
+              return 'Tags too long';
+            }
+          },
+        },
+      ],
+    },
+    {
+      id: 'scheduling',
+      title: 'Schedule & Priority',
+      description: 'When is this task due?',
+      fields: [
+        {
+          name: 'priority',
+          label: 'Priority',
+          type: 'select',
+          options: [
+            { label: 'Low', value: 'LOW' },
+            { label: 'Medium', value: 'MEDIUM' },
+            { label: 'High', value: 'HIGH' },
+          ],
+        },
+        // Due date is handled separately in custom rendering
+        {
+          name: 'due_date_placeholder',
+          label: 'Due Date',
+          type: 'text',
+          placeholder: 'Selected in date picker',
+        },
+      ],
+    },
+    {
+      id: 'advanced',
+      title: 'Reminder & Recurrence',
+      description: 'Set up reminders and recurring tasks',
+      fields: [
+        {
+          name: 'reminder_offset_placeholder',
+          label: 'Reminder',
+          type: 'text',
+          placeholder: 'Choose when to be reminded',
+        },
+        {
+          name: 'recurrence_placeholder',
+          label: 'Recurrence',
+          type: 'text',
+          placeholder: 'Repeat this task (optional)',
+        },
+      ],
+    },
+  ];
 }
 
 export function TaskForm({
-    isOpen,
-    onClose,
-    task,
-    mode,
-    onTaskCreated,
-    onTaskUpdated,
+  isOpen,
+  onClose,
+  task,
+  mode,
+  onTaskCreated,
+  onTaskUpdated,
 }: TaskFormProps) {
-    const router = useRouter();
-    const [formData, setFormData] = useState<TaskFormData>({
-        title: task?.title || "",
-        description: task?.description || "",
-        due_date: task?.due_date || null,
-        priority: task?.priority || ("MEDIUM" as TaskPriority),
-        tags: task?.tags || [],
-        reminder_offset: task?.reminder_offset ?? null,
-        recurrence: task?.recurrence ?? null,
+  const router = useRouter();
+  const [initialData, setInitialData] = useState<Record<string, any>>({});
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [formData, setFormData] = useState<TaskFormData>({
+    title: '',
+    description: '',
+    due_date: null,
+    priority: 'MEDIUM' as TaskPriority,
+    tags: [],
+    reminder_offset: null,
+    recurrence: null,
+  });
+
+  const formSteps = createFormSteps(task);
+
+  // Initialize form data when opening or task changes
+  useEffect(() => {
+    if (isOpen && mode === 'create' && !task) {
+      const newFormData: TaskFormData = {
+        title: '',
+        description: '',
+        due_date: null,
+        priority: 'MEDIUM',
+        tags: [],
+        reminder_offset: null,
+        recurrence: null,
+      };
+      setFormData(newFormData);
+      setInitialData({
+        title: '',
+        description: '',
+        priority: 'MEDIUM',
+        tags: '',
+        due_date_placeholder: '',
+        reminder_offset_placeholder: '',
+        recurrence_placeholder: '',
+      });
+      setCurrentStepIndex(0);
+    } else if (isOpen && task) {
+      const newFormData: TaskFormData = {
+        title: task.title,
+        description: task.description || '',
+        due_date: task.due_date || null,
+        priority: task.priority as TaskPriority,
+        tags: task.tags || [],
+        reminder_offset: task.reminder_offset ?? null,
+        recurrence: task.recurrence ?? null,
+      };
+      setFormData(newFormData);
+      setInitialData({
+        title: task.title,
+        description: task.description || '',
+        priority: task.priority,
+        tags: task.tags?.join(', ') || '',
+        due_date_placeholder: task.due_date ? new Date(task.due_date).toLocaleDateString() : '',
+        reminder_offset_placeholder: task.reminder_offset ? `${task.reminder_offset} min before` : '',
+        recurrence_placeholder: task.recurrence || '',
+      });
+      setCurrentStepIndex(0);
+    }
+  }, [isOpen, task, mode]);
+
+  const handleSubmit = async (data: Record<string, any>) => {
+    // Parse tags from comma-separated string
+    const parsedTags = typeof data.tags === 'string'
+      ? data.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t.length > 0)
+      : data.tags || [];
+
+    const submitData: TaskFormData = {
+      title: data.title,
+      description: data.description || '',
+      due_date: formData.due_date,
+      priority: data.priority as TaskPriority,
+      tags: parsedTags,
+      reminder_offset: formData.reminder_offset,
+      recurrence: formData.recurrence,
+    };
+
+    // Validate with Zod schema
+    try {
+      taskFormSchema.parse(submitData);
+    } catch (err: any) {
+      if (err?.errors) {
+        const error = err.errors[0];
+        toast.error(error?.message || 'Validation failed');
+        throw new Error(error?.message || 'Validation failed');
+      }
+    }
+
+    if (mode === 'create') {
+      try {
+        const newTask = await taskApi.createTask(submitData);
+        toast.success('Task created successfully');
+        onTaskCreated?.(newTask);
+        handleClose();
+        setTimeout(() => router.refresh(), 150);
+      } catch (error: any) {
+        toast.error(error?.message || 'Failed to create task');
+        throw error;
+      }
+    } else {
+      try {
+        const updated = await taskApi.updateTask(task!.id, submitData);
+        toast.success('Task updated successfully');
+        onTaskUpdated?.(updated);
+        handleClose();
+        router.refresh();
+      } catch (error: any) {
+        toast.error(error?.message || 'Failed to update task');
+        throw error;
+      }
+    }
+  };
+
+  const handleClose = () => {
+    setFormData({
+      title: '',
+      description: '',
+      due_date: null,
+      priority: 'MEDIUM',
+      tags: [],
+      reminder_offset: null,
+      recurrence: null,
     });
-    const [errors, setErrors] = useState<Record<string, string>>({});
+    setInitialData({});
+    setCurrentStepIndex(0);
+    onClose();
+  };
 
-    const { isPending, executeOptimistic } = useOptimisticAction();
-
-    useEffect(() => {
-        if (isOpen && mode === "create" && !task) {
-            setFormData({
-                title: "",
-                description: "",
-                due_date: null,
-                priority: "MEDIUM",
-                tags: [],
-                reminder_offset: null,
-                recurrence: null,
-            });
-            setErrors({});
-        } else if (isOpen && task) {
-            setFormData({
-                title: task.title,
-                description: task.description || "",
-                due_date: task.due_date || null,
-                priority: task.priority as TaskPriority,
-                tags: task.tags || [],
-                reminder_offset: task.reminder_offset ?? null,
-                recurrence: task.recurrence ?? null,
-            });
-            setErrors({});
-        }
-        // we only want to react to opening or the given task changing
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen, task, mode]);
-
-    const handleChange = (
-        e: React.ChangeEvent<
-            HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-        >,
-    ) => {
-        const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
-        if (errors[name]) {
-            setErrors((prev) => {
-                const copy = { ...prev };
-                delete copy[name];
-                return copy;
-            });
-        }
-    };
-
-    const handleTagsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value;
-        const tags = value
-            .split(",")
-            .map((t) => t.trim())
-            .filter((t) => t.length > 0);
-        setFormData((prev) => ({ ...prev, tags }));
-        if (errors.tags) {
-            setErrors((prev) => {
-                const copy = { ...prev };
-                delete copy.tags;
-                return copy;
-            });
-        }
-    };
-
-    const getTagsDisplayValue = () => formData.tags.join(", ");
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setErrors({});
-
-        try {
-            taskFormSchema.parse(formData);
-        } catch (err: any) {
-            if (err?.errors) {
-                const newErrors: Record<string, string> = {};
-                err.errors.forEach((zErr: any) => {
-                    if (zErr.path && zErr.path.length > 0) {
-                        newErrors[zErr.path[0]] = zErr.message;
-                    }
-                });
-                setErrors(newErrors);
-                return;
+  // Custom field renderer for special fields
+  const renderCustomField = (field: any, stepIndex: number) => {
+    // Due date picker
+    if (field.name === 'due_date_placeholder') {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            {field.label}
+          </label>
+          <DueDateField
+            value={formData.due_date}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, due_date: value }))
             }
-        }
+          />
+        </div>
+      );
+    }
 
-        if (mode === "create") {
-            await executeOptimistic({
-                optimisticUpdate: () => {
-                    // parent may add placeholder task if desired
-                },
-                action: async () => {
-                    const result = await taskApi.createTask(formData);
-                    return result;
-                },
-                onSuccess: (newTask: Task) => {
-                    toast.success("Task created successfully");
-                    onTaskCreated?.(newTask);
-                    handleClose();
-                    setTimeout(() => router.refresh(), 150);
-                },
-                onError: (error: any) => {
-                    toast.error(error?.message || "Failed to create task");
-                },
-                successMessage: "Task created successfully",
-                errorMessage: "Failed to create task",
-            });
-        } else {
-            try {
-                const updated = await taskApi.updateTask(task!.id, formData);
-                toast.success("Task updated successfully");
-                onTaskUpdated?.(updated);
-                handleClose();
-                router.refresh();
-            } catch (error: any) {
-                toast.error(error?.message || "Failed to update task");
+    // Reminder offset selector
+    if (field.name === 'reminder_offset_placeholder') {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            {field.label}
+          </label>
+          <ReminderOffsetSelector
+            value={formData.reminder_offset}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, reminder_offset: value }))
             }
-        }
-    };
+          />
+        </div>
+      );
+    }
 
-    const handleClose = () => {
-        setFormData({
-            title: "",
-            description: "",
-            due_date: null,
-            priority: "MEDIUM",
-            tags: [],
-            reminder_offset: null,
-            recurrence: null,
-        });
-        setErrors({});
-        onClose();
-    };
+    // Recurrence picker
+    if (field.name === 'recurrence_placeholder') {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block text-sm font-medium text-foreground mb-1.5">
+            {field.label}
+          </label>
+          <RecurrencePicker
+            value={formData.recurrence}
+            onChange={(value) =>
+              setFormData((prev) => ({ ...prev, recurrence: value }))
+            }
+          />
+        </div>
+      );
+    }
 
-    return (
-        <Dialog
-            open={isOpen}
-            onOpenChange={(open) => {
-                if (!open) handleClose();
-            }}
+    return null;
+  };
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="w-full max-w-2xl mx-4">
+        <MultiStepForm
+          steps={formSteps}
+          onSubmit={handleSubmit}
+          submitLabel={mode === 'create' ? 'Create Task' : 'Save Changes'}
+          initialData={initialData}
+          className="max-h-[90vh] overflow-y-auto"
+        />
+        <button
+          onClick={handleClose}
+          className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Close form"
         >
-            <DialogContent className="w-full max-w-[95vw] sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-auto p-6 overflow-auto max-h-[90vh]">
-                <DialogHeader>
-                    <DialogTitle>
-                        {mode === "create" ? "Create New Task df" : "Edit Task"}
-                    </DialogTitle>
-                    <DialogDescription>
-                        {mode === "create"
-                            ? "Add a new task to your list."
-                            : "Update the task details."}
-                    </DialogDescription>
-                </DialogHeader>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    {/* Title */}
-                    <div>
-                        <Label htmlFor="title">
-                            Title <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                            id="title"
-                            name="title"
-                            value={formData.title}
-                            onChange={handleChange}
-                            required
-                            placeholder="Enter task title"
-                            className={cn(
-                                errors.title &&
-                                    "border-destructive focus:ring-destructive",
-                            )}
-                        />
-                        {errors.title && (
-                            <p className="mt-1 text-xs text-destructive">
-                                {errors.title}
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Description */}
-                    <div>
-                        <Label htmlFor="description">Description</Label>
-                        <Textarea
-                            id="description"
-                            name="description"
-                            value={formData.description}
-                            onChange={handleChange}
-                            rows={3}
-                            placeholder="Enter task description (optional)"
-                            className={cn(
-                                errors.description &&
-                                    "border-destructive focus:ring-destructive",
-                            )}
-                        />
-                        {errors.description && (
-                            <p className="mt-1 text-xs text-destructive">
-                                {errors.description}
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Tags */}
-                    <div>
-                        <Label htmlFor="tags">Tags</Label>
-                        <Input
-                            id="tags"
-                            name="tags"
-                            type="text"
-                            value={getTagsDisplayValue()}
-                            onChange={handleTagsChange}
-                            placeholder="Enter tags separated by commas (e.g., work, urgent)"
-                            className={cn(
-                                errors.tags &&
-                                    "border-destructive focus:ring-destructive",
-                            )}
-                        />
-                        {errors.tags && (
-                            <p className="mt-1 text-xs text-destructive">
-                                {errors.tags}
-                            </p>
-                        )}
-                    </div>
-
-                    {/* Priority */}
-                    <div>
-                        <Label htmlFor="priority">Priority</Label>
-                        <Select
-                            value={formData.priority}
-                            onValueChange={(value) =>
-                                setFormData((prev) => ({
-                                    ...prev,
-                                    priority: value as TaskPriority,
-                                }))
-                            }
-                        >
-                            <SelectTrigger id="priority" className="w-full">
-                                <SelectValue placeholder="Select priority" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="LOW">Low</SelectItem>
-                                <SelectItem value="MEDIUM">
-                                    Medium
-                                </SelectItem>
-                                <SelectItem value="HIGH">High</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* Due Date with DateTime Picker */}
-                    <DueDateField
-                        value={formData.due_date}
-                        onChange={(value) =>
-                            setFormData((prev) => ({
-                                ...prev,
-                                due_date: value,
-                            }))
-                        }
-                        error={errors.due_date}
-                    />
-
-                    {/* Reminder Offset Selector */}
-                    <ReminderOffsetSelector
-                        value={formData.reminder_offset}
-                        onChange={(value) =>
-                            setFormData((prev) => ({
-                                ...prev,
-                                reminder_offset: value,
-                            }))
-                        }
-                    />
-
-                    {/* Recurrence Picker */}
-                    <RecurrencePicker
-                        value={formData.recurrence}
-                        onChange={(value) =>
-                            setFormData((prev) => ({
-                                ...prev,
-                                recurrence: value,
-                            }))
-                        }
-                    />
-
-                    <DialogFooter className="px-0">
-                        <div className="w-full flex justify-end gap-2">
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={handleClose}
-                                disabled={isPending}
-                            >
-                                Cancel
-                            </Button>
-
-                            <Button type="submit" disabled={isPending}>
-                                {isPending ? (
-                                    <div className="flex items-center gap-2">
-                                        <LoadingSpinner
-                                            size="sm"
-                                            className="border-primary-foreground"
-                                        />
-                                        <span>Saving...</span>
-                                    </div>
-                                ) : mode === "create" ? (
-                                    "Create Task"
-                                ) : (
-                                    "Save Changes"
-                                )}
-                            </Button>
-                        </div>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-    );
+          <svg
+            className="w-6 h-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
 }
